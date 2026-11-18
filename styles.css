@@ -1,0 +1,145 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #0b1a2b;
+  color: #eaf4ff;
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+}
+
+.home {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  text-align: center;
+  background:
+    radial-gradient(ellipse at center, #1a3a5c 0%, #0b1a2b 70%);
+}
+
+.title {
+  font-size: clamp(3rem, 8vw, 6rem);
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  color: #9fd8ff;
+  text-shadow:
+    0 0 20px rgba(159, 216, 255, 0.4),
+    4px 4px 0 #0b1a2b;
+  margin-bottom: 2rem;
+}
+
+.title .vs {
+  color: #ff7a5c;
+  font-size: 0.6em;
+  vertical-align: middle;
+  text-shadow: 0 0 20px rgba(255, 122, 92, 0.5);
+}
+
+.how-to-play {
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid rgba(159, 216, 255, 0.2);
+  border-radius: 16px;
+  padding: 2rem 2.5rem;
+  max-width: 800px;
+  width: 100%;
+  backdrop-filter: blur(6px);
+}
+
+.how-to-play h2 {
+  font-size: 1.75rem;
+  margin-bottom: 0.5rem;
+  color: #9fd8ff;
+}
+
+.intro {
+  color: #c6dbef;
+  margin-bottom: 1.5rem;
+  font-size: 1.05rem;
+}
+
+.players {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+@media (max-width: 600px) {
+  .players { grid-template-columns: 1fr; }
+}
+
+.player {
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 12px;
+  padding: 1.25rem;
+  text-align: left;
+}
+
+.player.tank { border-left: 4px solid #6cdc6c; }
+.player.car  { border-left: 4px solid #ff7a5c; }
+
+.player h3 {
+  margin-bottom: 0.75rem;
+  font-size: 1.1rem;
+}
+
+.player ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 0.95rem;
+  color: #d8e8f5;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 1.6em;
+  padding: 0.15em 0.5em;
+  background: #e8f3ff;
+  color: #0b1a2b;
+  border-radius: 4px;
+  font-family: inherit;
+  font-weight: 700;
+  font-size: 0.85em;
+  box-shadow: 0 2px 0 #7fa8c9;
+}
+
+.warning {
+  color: #ffd27a;
+  font-size: 0.95rem;
+  font-style: italic;
+}
+
+.start-prompt {
+  margin-top: 2rem;
+  font-size: 1.25rem;
+  color: #9fd8ff;
+  letter-spacing: 0.05em;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 0.5; }
+  50%      { opacity: 1; }
+}
+
+#game {
+  display: block;
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  background: #0b1a2b;
+}

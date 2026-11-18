@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tanks vs Cars</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <main class="home" id="home">
+    <h1 class="title">TANKS <span class="vs">vs</span> CARS</h1>
+
+    <section class="how-to-play">
+      <h2>How to Play</h2>
+      <p class="intro">One player vs. CPU. Each round you're randomly assigned the tank or the car.</p>
+
+      <div class="players">
+        <div class="player tank">
+          <h3>If you're the Tank</h3>
+          <ul>
+            <li><kbd>&uarr;</kbd> <kbd>&larr;</kbd> <kbd>&darr;</kbd> <kbd>&rarr;</kbd> to drive</li>
+            <li><kbd>Space</kbd> to shoot</li>
+            <li>Goal: shoot down the car before time runs out</li>
+          </ul>
+        </div>
+
+        <div class="player car">
+          <h3>If you're the Car</h3>
+          <ul>
+            <li><kbd>&uarr;</kbd> <kbd>&larr;</kbd> <kbd>&darr;</kbd> <kbd>&rarr;</kbd> to drive</li>
+            <li>Goal: survive until the timer hits zero</li>
+          </ul>
+        </div>
+      </div>
+
+      <p class="warning">Stay on the ice! Hit the snow and you'll spin out.</p>
+    </section>
+
+    <p class="start-prompt">Click anywhere to start</p>
+  </main>
+
+  <script src="game.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>
