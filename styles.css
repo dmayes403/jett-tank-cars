@@ -24,6 +24,8 @@ html, body {
   justify-content: center;
   padding: 2rem;
   text-align: center;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   background:
     radial-gradient(ellipse at center, #1a3a5c 0%, #0b1a2b 70%);
 }
@@ -76,7 +78,24 @@ html, body {
 }
 
 @media (max-width: 600px) {
-  .players { grid-template-columns: 1fr; }
+  .home { padding: 1rem 0.75rem; justify-content: flex-start; }
+  .title { font-size: 2.25rem; margin-bottom: 0.75rem; }
+  .how-to-play { padding: 1rem 1.25rem; }
+  .how-to-play h2 { font-size: 1.3rem; }
+  .intro { font-size: 0.95rem; margin-bottom: 0.9rem; }
+  .players { grid-template-columns: 1fr; gap: 0.75rem; margin-bottom: 0.9rem; }
+  .player { padding: 0.9rem 1rem; }
+  .player h3 { font-size: 1rem; margin-bottom: 0.4rem; }
+  .player ul { gap: 0.3rem; font-size: 0.9rem; }
+  .warning { font-size: 0.85rem; }
+  .start-prompt { margin-top: 1rem; font-size: 1.05rem; }
+}
+
+/* Show the right control instructions based on whether the device has a touchscreen. */
+.touch-only { display: none; }
+@media (hover: none) and (pointer: coarse) {
+  .desktop-only { display: none; }
+  .touch-only   { display: grid; }
 }
 
 .player {

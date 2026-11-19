@@ -75,6 +75,86 @@ function isOnIsland(x, y) {
   return false;
 }
 
+// ---------- Touch input (virtual joystick + fire button) ----------
+
+let touchSeen = false;
+function isTouchish() {
+  return touchSeen
+      || ("ontouchstart" in window)
+      || (navigator.maxTouchPoints > 0)
+      || (window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+}
+
+const joystick = {
+  active: false,
+  touchId: null,
+  baseX: 0, baseY: 0,       // center of the base (set when touch starts)
+  stickX: 0, stickY: 0,     // current finger position
+  dx: 0, dy: 0,             // normalized vector (-1..1)
+  radius: 60,
+};
+
+// Each new touch down counts as a fire tap (consumed in update()).
+let touchFire = false;
+
+function getCanvasPoint(touch) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
+}
+
+function startJoystick(touch) {
+  const p = getCanvasPoint(touch);
+  joystick.active = true;
+  joystick.touchId = touch.identifier;
+  joystick.baseX = p.x;
+  joystick.baseY = p.y;
+  joystick.stickX = p.x;
+  joystick.stickY = p.y;
+  joystick.dx = 0; joystick.dy = 0;
+}
+
+function updateJoystick(touch) {
+  const p = getCanvasPoint(touch);
+  let dx = p.x - joystick.baseX;
+  let dy = p.y - joystick.baseY;
+  const dist = Math.hypot(dx, dy);
+  const max = joystick.radius;
+  if (dist > max) { dx = dx * max / dist; dy = dy * max / dist; }
+  joystick.stickX = joystick.baseX + dx;
+  joystick.stickY = joystick.baseY + dy;
+  joystick.dx = dx / max;
+  joystick.dy = dy / max;
+}
+
+function endJoystick() {
+  joystick.active = false;
+  joystick.touchId = null;
+  joystick.dx = 0; joystick.dy = 0;
+}
+
+canvas.addEventListener("touchstart", (e) => {
+  touchSeen = true;
+  // Every touch-down fires one shot (tank only — handled in update()).
+  touchFire = true;
+  for (const t of e.changedTouches) {
+    if (!joystick.active) startJoystick(t);
+  }
+  e.preventDefault();
+}, { passive: false });
+
+canvas.addEventListener("touchmove", (e) => {
+  for (const t of e.changedTouches) {
+    if (t.identifier === joystick.touchId) updateJoystick(t);
+  }
+  e.preventDefault();
+}, { passive: false });
+
+function endTouch(t) {
+  if (t.identifier === joystick.touchId) endJoystick();
+}
+canvas.addEventListener("touchend",    (e) => { for (const t of e.changedTouches) endTouch(t); e.preventDefault(); }, { passive: false });
+canvas.addEventListener("touchcancel", (e) => { for (const t of e.changedTouches) endTouch(t); e.preventDefault(); }, { passive: false });
+
 // Input
 const keys = Object.create(null);
 window.addEventListener("keydown", (e) => {
@@ -94,10 +174,10 @@ canvas.addEventListener("click", () => {
 
 // Entities
 const SPIN_DURATION = 1.5; // seconds
-const FIRE_COOLDOWN = 0.5; // seconds between tank shots
-const BULLET_SPEED = 440;  // world units/second
-const BULLET_LIFESPAN = 2.0;
-const BULLET_SPREAD = 36;  // spacing between the 3 in-line bullets
+const FIRE_COOLDOWN = 1.3; // seconds between tank shots
+const BULLET_SPEED = 340;  // world units/second
+const BULLET_LIFESPAN = 2.4;
+const BULLET_SPREAD = 50;  // spacing between the in-line bullets (bigger = more gap)
 const ROUND_TIME = 120;    // seconds per round
 const AUTO_SCROLL = 110;   // world units/sec the road carries you forward
 
@@ -105,7 +185,29 @@ const game = {
   timeLeft: ROUND_TIME,
   state: "playing", // "playing" | "tankWins" | "carWins"
   playerIsTank: Math.random() < 0.5,
+  roleSplash: 2.5, // seconds the "YOU ARE THE ___" splash is shown at round start
+  resumeDelay: 0, // short "get ready" countdown after resuming from pause
 };
+
+// Pause both gameplay and audio when the tab/window is hidden.
+let paused = false;
+function pauseGame() {
+  paused = true;
+  stopMusic();
+}
+function unpauseGame() {
+  paused = false;
+  last = performance.now();
+  if (game.state === "playing") {
+    game.resumeDelay = 2.0; // short "get ready" so the player can focus
+    startMusic();
+  }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) pauseGame(); else unpauseGame();
+});
+window.addEventListener("blur",  pauseGame);
+window.addEventListener("focus", () => { if (!document.hidden) unpauseGame(); });
 
 const tank = {
   x: 0,
@@ -113,10 +215,10 @@ const tank = {
   angle: 0, // facing up (away from the car at start)
   resetAngle: 0,
   speed: 0,
-  maxSpeed: 220,
-  accel: 420,
+  maxSpeed: 190,
+  accel: 380,
   friction: 320,
-  turnSpeed: 2.6,
+  turnSpeed: 2.4,
   w: 42,
   h: 54,
   spinning: 0,
@@ -131,9 +233,9 @@ const car = {
   resetAngle: 0,
   speed: 0,
   maxSpeed: 260,
-  accel: 480,
+  accel: 520,
   friction: 320,
-  turnSpeed: 3.0,
+  turnSpeed: 3.6,
   w: 36,
   h: 52,
   spinning: 0,
@@ -335,18 +437,37 @@ function playMusicLead(freq, when, duration) {
 
 // Camera follows the midpoint between the two vehicles.
 let cameraY = 0;
+let viewScale = 1; // updated each frame in draw()
 
 function update(dt) {
+  // Always let the screen shake wind down, even after the round ends.
+  if (shakeTime > 0) shakeTime = Math.max(0, shakeTime - dt);
+
   if (game.state !== "playing") return;
+
+  // Hold everything still while the "YOU ARE THE ___" splash is up.
+  if (game.roleSplash > 0) {
+    game.roleSplash -= dt;
+    return;
+  }
+
+  // Short "get ready" countdown after resuming from pause.
+  if (game.resumeDelay > 0) {
+    game.resumeDelay -= dt;
+    return;
+  }
 
   // The road carries both vehicles forward automatically (like the Scratch original).
   tank.y -= AUTO_SCROLL * dt;
   car.y  -= AUTO_SCROLL * dt;
 
-  // Single-player: the human always uses arrow keys. Tank fires with Space.
+  // Single-player: arrow keys OR virtual joystick drive the player. Tank fires with Space or the fire button.
+  const dead = 0.25;
   const playerInput = {
-    forward: keys["arrowup"], back: keys["arrowdown"],
-    left: keys["arrowleft"], right: keys["arrowright"],
+    forward: keys["arrowup"]    || joystick.dy < -dead,
+    back:    keys["arrowdown"]  || joystick.dy >  dead,
+    left:    keys["arrowleft"]  || joystick.dx < -dead,
+    right:   keys["arrowright"] || joystick.dx >  dead,
   };
 
   updateAI(dt);
@@ -358,22 +479,22 @@ function update(dt) {
 
   // Tank firing (player or AI)
   tank.cooldown = Math.max(0, tank.cooldown - dt);
-  const wantFire = game.playerIsTank ? keys[" "] : tank._aiShoot;
+  const wantFire = game.playerIsTank ? (keys[" "] || touchFire) : tank._aiShoot;
   if (wantFire && tank.cooldown <= 0 && tank.spinning <= 0) {
     fireBullets();
     tank.cooldown = FIRE_COOLDOWN;
     tank.muzzleFlash = 0.09;
     playShoot();
   }
+  touchFire = false; // consume any tap-fire this frame
   if (tank.muzzleFlash > 0) tank.muzzleFlash = Math.max(0, tank.muzzleFlash - dt);
 
   updateBullets(dt);
   resolveVehicleCollision();
   updateParticles(dt);
 
-  // Hit flash timer + screen shake
+  // Hit flash timer
   if (car.hitFlash > 0) car.hitFlash = Math.max(0, car.hitFlash - dt);
-  if (shakeTime > 0) shakeTime = Math.max(0, shakeTime - dt);
 
   // Spawn spin-out dust while either vehicle is spinning.
   if (tank.spinning > 0) spawnSpinDust(tank, dt);
@@ -473,6 +594,7 @@ function resetGame() {
   game.timeLeft = ROUND_TIME;
   game.state = "playing";
   game.playerIsTank = Math.random() < 0.5;
+  game.roleSplash = 2.5;
   bullets.length = 0;
   particles.length = 0;
 
@@ -509,35 +631,62 @@ const ai = {
   car: {
     biasTimer: 0, bias: 0,
     jitterTimer: 0, jitter: 0,
+    jukeTimer: 1.0, juke: 0,     // occasional sharp direction swap
+    throttleTimer: 0, throttle: 1, // sometimes let off the gas to be unpredictable
   },
 };
 
 function updateAI(dt) {
-  // Tank: refresh its memory of where the car is every ~0.25s (reaction delay).
+  // Tank: refresh its memory of where the car is every ~0.35s (reaction delay — slower now).
   ai.tank.reactionTimer -= dt;
   if (ai.tank.reactionTimer <= 0) {
     ai.tank.targetX = car.x;
     ai.tank.targetY = car.y;
-    ai.tank.reactionTimer = 0.18 + Math.random() * 0.22;
+    ai.tank.reactionTimer = 0.28 + Math.random() * 0.28;
   }
-  // Aim wobble so shots don't always go perfectly on target.
+  // Bigger aim wobble so shots miss more often.
   ai.tank.aimJitterTimer -= dt;
   if (ai.tank.aimJitterTimer <= 0) {
-    ai.tank.aimJitter = (Math.random() - 0.5) * 0.28;
-    ai.tank.aimJitterTimer = 0.25 + Math.random() * 0.35;
+    ai.tank.aimJitter = (Math.random() - 0.5) * 0.45;
+    ai.tank.aimJitterTimer = 0.25 + Math.random() * 0.4;
   }
 
-  // Car: pick a lane-bias (favor left or right of center) every ~1s.
+  // Car: lane bias flips often to chaotic targets.
   ai.car.biasTimer -= dt;
   if (ai.car.biasTimer <= 0) {
-    ai.car.bias = (Math.random() - 0.5) * 120;
-    ai.car.biasTimer = 0.7 + Math.random() * 0.8;
+    // Occasionally slam to a hard side instead of sampling smoothly.
+    if (Math.random() < 0.3) ai.car.bias = (Math.random() < 0.5 ? -1 : 1) * 260;
+    else                     ai.car.bias = (Math.random() - 0.5) * 240;
+    ai.car.biasTimer = 0.18 + Math.random() * 0.9;
   }
   // Short-term wobble on top of the lane bias.
   ai.car.jitterTimer -= dt;
   if (ai.car.jitterTimer <= 0) {
-    ai.car.jitter = (Math.random() - 0.5) * 40;
-    ai.car.jitterTimer = 0.2 + Math.random() * 0.3;
+    ai.car.jitter = (Math.random() - 0.5) * 90;
+    ai.car.jitterTimer = 0.1 + Math.random() * 0.3;
+  }
+  // Juke: sharp side-darts, bigger and more frequent.
+  ai.car.jukeTimer -= dt;
+  if (ai.car.jukeTimer <= 0) {
+    const r = Math.random();
+    if (r < 0.6) {
+      ai.car.juke = (Math.random() < 0.5 ? -1 : 1) * (150 + Math.random() * 180);
+    } else if (r < 0.75) {
+      // Head-fake: dart toward the tank briefly.
+      ai.car.juke = (tank.x - car.x) * 0.6;
+    } else {
+      ai.car.juke = 0;
+    }
+    ai.car.jukeTimer = 0.25 + Math.random() * 0.9;
+  }
+  // Throttle: varies — short sprints, coasts, occasional brake.
+  ai.car.throttleTimer -= dt;
+  if (ai.car.throttleTimer <= 0) {
+    const r = Math.random();
+    if (r < 0.12)      ai.car.throttle = -0.5; // brief reverse
+    else if (r < 0.35) ai.car.throttle = 0;    // coast
+    else               ai.car.throttle = 1;    // full ahead
+    ai.car.throttleTimer = 0.25 + Math.random() * 0.8;
   }
 }
 
@@ -557,9 +706,9 @@ function tankAI() {
   };
 
   // Fire only sometimes even when aligned — not relentless.
-  const aligned = Math.abs(diff) < 0.22;
-  const inRange = dist > 100 && dist < 480;
-  tank._aiShoot = aligned && inRange && Math.random() < 0.55;
+  const aligned = Math.abs(diff) < 0.15;
+  const inRange = dist > 100 && dist < 380;
+  tank._aiShoot = aligned && inRange && Math.random() < 0.22;
   return input;
 }
 
@@ -570,10 +719,44 @@ function carAI() {
   const safeR = r - 30;
   const mid = (l + r) / 2;
 
-  // Desired lateral target: middle + current mood bias + wobble, pushed away from tank.
-  let target = mid + ai.car.bias + ai.car.jitter;
-  if (tank.x > car.x) target -= 35;
-  else                target += 35;
+  // Desired lateral target: middle + current mood bias + wobble + juke.
+  let target = mid + ai.car.bias + ai.car.jitter + ai.car.juke;
+  // Push away from tank — but sometimes INVERT it as a feint.
+  const feintAway = (Math.sin(game.timeLeft * 3.7) > 0.7) ? -1 : 1;
+  if (tank.x > car.x) target -= 35 * feintAway;
+  else                target += 35 * feintAway;
+
+  // Avoid snow islands — scan a short distance ahead and steer around any island on our path.
+  for (const isl of SNOW_ISLANDS) {
+    for (const loopBase of [0, TRACK_PATTERN_HEIGHT, -TRACK_PATTERN_HEIGHT]) {
+      const ix = isl.x;
+      const iy = isl.y - Math.floor(car.y / TRACK_PATTERN_HEIGHT) * TRACK_PATTERN_HEIGHT + loopBase;
+      // Only worry about islands just ahead of (or on top of) the car.
+      if (iy > car.y + 20) continue;
+      if (iy < car.y - isl.ry - 180) continue;
+      // Does the target column pass through the island?
+      if (Math.abs(target - ix) < isl.rx + 25) {
+        // Push target to whichever side of the island is closer to clear.
+        const leftExit  = ix - isl.rx - 30;
+        const rightExit = ix + isl.rx + 30;
+        target = Math.abs(target - leftExit) < Math.abs(target - rightExit) ? leftExit : rightExit;
+      }
+    }
+  }
+
+  // Bullet dodging — swerve away from any bullet that's close and approaching.
+  for (const b of bullets) {
+    const dx = car.x - b.x;
+    const dy = car.y - b.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > 220) continue;
+    // Is the bullet actually coming toward the car?
+    const approaching = (b.vx * -dx + b.vy * -dy) > 0;
+    if (!approaching) continue;
+    // Shove the target sideways relative to the bullet's travel.
+    const side = dx >= 0 ? 1 : -1;
+    target += side * 110 * (1 - dist / 220);
+  }
 
   if (target < safeL) target = safeL;
   if (target > safeR) target = safeR;
@@ -583,8 +766,8 @@ function carAI() {
   const diff = normalizeAngle(want - car.angle);
 
   return {
-    forward: true,
-    back:    false,
+    forward: ai.car.throttle > 0,
+    back:    ai.car.throttle < 0,
     left:    diff < -0.08,
     right:   diff >  0.08,
   };
@@ -599,8 +782,8 @@ function fireBullets() {
   const bx = tank.x + fx * barrelDist;
   const by = tank.y + fy * barrelDist;
 
-  // 3 bullets in a line, one behind the other.
-  for (let i = 0; i < 3; i++) {
+  // 2 bullets in a line, one behind the other.
+  for (let i = 0; i < 2; i++) {
     const backOffset = i * BULLET_SPREAD;
     bullets.push({
       x: bx - fx * backOffset,
@@ -906,9 +1089,13 @@ function draw() {
     shakeX = Math.round((Math.random() - 0.5) * 2 * intensity);
     shakeY = Math.round((Math.random() - 0.5) * 2 * intensity);
   }
+  // View scale: shrink the world so the road fits comfortably on narrow (portrait) screens.
+  viewScale = Math.min(1, canvas.width / 900);
   const tx = Math.round(canvas.width / 2) + shakeX;
-  const ty = Math.round(canvas.height / 2 - cameraY) + shakeY;
+  const ty = Math.round(canvas.height / 2) + shakeY;
   ctx.translate(tx, ty);
+  ctx.scale(viewScale, viewScale);
+  ctx.translate(0, -cameraY);
 
   drawTrack();
   drawHazards();
@@ -924,9 +1111,9 @@ function draw() {
 
 function drawHUD() {
   // Hearts in the top-left corner.
-  const scale = 4;
+  const scale = 7;
   const pad = 20;
-  const spacing = heartFullSprite.w * scale + 8;
+  const spacing = heartFullSprite.w * scale + 10;
   for (let i = 0; i < 3; i++) {
     const spr = i < car.lives ? heartFullSprite : heartEmptySprite;
     ctx.drawImage(
@@ -938,16 +1125,16 @@ function drawHUD() {
     );
   }
 
-  // "You are the ___" label under the hearts.
-  const youLabel = game.playerIsTank ? "YOU: TANK" : "YOU: CAR";
+  // "You are the ___" label under the hearts — bigger so it's easy to see.
+  const youLabel = game.playerIsTank ? "YOU ARE THE TANK" : "YOU ARE THE CAR";
   const youColor = game.playerIsTank ? "#6cdc6c" : "#ff7a5c";
-  ctx.font = "bold 20px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  ctx.font = "bold 28px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
-  const yLabelY = pad + heartFullSprite.h * scale + 10;
+  const yLabelY = pad + heartFullSprite.h * scale + 14;
   ctx.lineJoin = "round";
-  ctx.strokeStyle = "rgba(255,255,255,0.85)";
-  ctx.lineWidth = 4;
+  ctx.strokeStyle = "rgba(0,0,0,0.75)";
+  ctx.lineWidth = 6;
   ctx.strokeText(youLabel, pad, yLabelY);
   ctx.fillStyle = youColor;
   ctx.fillText(youLabel, pad, yLabelY);
@@ -966,7 +1153,99 @@ function drawHUD() {
   ctx.fillStyle = timeLow ? "#c21a1a" : "#111";
   ctx.fillText(timeStr, canvas.width - pad, pad);
 
+  drawTouchControls();
   if (game.state !== "playing") drawGameOver();
+  if (game.roleSplash > 0) drawRoleSplash();
+  if (game.resumeDelay > 0 && game.roleSplash <= 0 && game.state === "playing") drawResumeCountdown();
+}
+
+function drawTouchControls() {
+  if (!isTouchish()) return;
+
+  // Joystick base + stick (only visible while touched).
+  if (joystick.active) {
+    ctx.beginPath();
+    ctx.arc(joystick.baseX, joystick.baseY, joystick.radius, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(0,0,0,0.3)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.7)";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(joystick.stickX, joystick.stickY, joystick.radius * 0.5, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.fill();
+    ctx.stroke();
+  } else {
+    // Hint pill in the bottom-left so first-time users know where to touch.
+    const hintX = 90, hintY = canvas.height - 100;
+    ctx.beginPath();
+    ctx.arc(hintX, hintY, 48, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.6)";
+    ctx.lineWidth = 2;
+    ctx.setLineDash([6, 6]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = "bold 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#eaf4ff";
+    ctx.fillText("MOVE", hintX, hintY);
+  }
+}
+
+function drawResumeCountdown() {
+  ctx.fillStyle = "rgba(0,0,0,0.55)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.font = "bold 44px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = "rgba(0,0,0,0.75)";
+  ctx.strokeText("GET READY", canvas.width / 2, canvas.height / 2 - 60);
+  ctx.fillStyle = "#eaf4ff";
+  ctx.fillText("GET READY", canvas.width / 2, canvas.height / 2 - 60);
+
+  const n = Math.max(1, Math.ceil(game.resumeDelay));
+  ctx.font = "bold 150px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  ctx.lineWidth = 12;
+  ctx.strokeText(String(n), canvas.width / 2, canvas.height / 2 + 30);
+  ctx.fillStyle = "#ffd560";
+  ctx.fillText(String(n), canvas.width / 2, canvas.height / 2 + 30);
+}
+
+function drawRoleSplash() {
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const title = game.playerIsTank ? "YOU ARE THE TANK" : "YOU ARE THE CAR";
+  const sub   = game.playerIsTank
+    ? "Hunt down the car with Space"
+    : "Dodge the tank until the timer runs out";
+  const color = game.playerIsTank ? "#6cdc6c" : "#ff7a5c";
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  ctx.font = "bold 72px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  ctx.lineJoin = "round";
+  ctx.lineWidth = 10;
+  ctx.strokeStyle = "rgba(0,0,0,0.8)";
+  ctx.strokeText(title, canvas.width / 2, canvas.height / 2 - 20);
+  ctx.fillStyle = color;
+  ctx.fillText(title, canvas.width / 2, canvas.height / 2 - 20);
+
+  ctx.font = "24px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  ctx.lineWidth = 5;
+  ctx.strokeText(sub, canvas.width / 2, canvas.height / 2 + 40);
+  ctx.fillStyle = "#eaf4ff";
+  ctx.fillText(sub, canvas.width / 2, canvas.height / 2 + 40);
 }
 
 function drawGameOver() {
@@ -1004,8 +1283,9 @@ function drawBullets() {
 }
 
 function drawHazards() {
-  const viewTop = cameraY - canvas.height / 2 - 100;
-  const viewBot = cameraY + canvas.height / 2 + 100;
+  const halfView = canvas.height / 2 / viewScale;
+  const viewTop = cameraY - halfView - 100;
+  const viewBot = cameraY + halfView + 100;
   const slotH = 56;
   const slotsPerPattern = Math.max(1, Math.floor(TRACK_PATTERN_HEIGHT / slotH));
   const startSlot = Math.floor(viewTop / slotH);
@@ -1049,8 +1329,9 @@ function hash2(x, y) {
 }
 
 function drawTrack() {
-  const viewTop = cameraY - canvas.height / 2 - PIXEL * 4;
-  const viewBot = cameraY + canvas.height / 2 + PIXEL * 4;
+  const halfView = canvas.height / 2 / viewScale;
+  const viewTop = cameraY - halfView - PIXEL * 4;
+  const viewBot = cameraY + halfView + PIXEL * 4;
 
   // Snow base.
   ctx.fillStyle = "#f2f8fc";
@@ -1194,6 +1475,11 @@ function drawVehicle(v, spr) {
 
 let last = performance.now();
 function loop(now) {
+  if (paused) {
+    last = now;
+    requestAnimationFrame(loop);
+    return;
+  }
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   update(dt);
