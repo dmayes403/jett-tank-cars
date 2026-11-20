@@ -88,11 +88,27 @@ function isTouchish() {
 const joystick = {
   active: false,
   touchId: null,
-  baseX: 0, baseY: 0,       // center of the base (set when touch starts)
-  stickX: 0, stickY: 0,     // current finger position
+  baseX: 0, baseY: 0,       // fixed anchor position (recomputed on resize)
+  stickX: 0, stickY: 0,     // current finger position (clamped)
   dx: 0, dy: 0,             // normalized vector (-1..1)
-  radius: 60,
+  radius: 70,
+  touchRadius: 110,         // slop radius — touches inside this activate the joystick
 };
+
+function layoutJoystick() {
+  // Bottom-left corner, with some margin for comfort.
+  joystick.baseX = 110;
+  joystick.baseY = canvas.height - 130;
+  joystick.stickX = joystick.baseX;
+  joystick.stickY = joystick.baseY;
+}
+layoutJoystick();
+window.addEventListener("resize", layoutJoystick);
+
+function inJoystickArea(x, y) {
+  const dx = x - joystick.baseX, dy = y - joystick.baseY;
+  return dx * dx + dy * dy < joystick.touchRadius * joystick.touchRadius;
+}
 
 // Each new touch down counts as a fire tap (consumed in update()).
 let touchFire = false;
@@ -103,18 +119,14 @@ function getCanvasPoint(touch) {
 }
 
 function startJoystick(touch) {
+  // Base stays fixed; initialize stick to finger position so the first drag feels right.
   const p = getCanvasPoint(touch);
   joystick.active = true;
   joystick.touchId = touch.identifier;
-  joystick.baseX = p.x;
-  joystick.baseY = p.y;
-  joystick.stickX = p.x;
-  joystick.stickY = p.y;
-  joystick.dx = 0; joystick.dy = 0;
+  updateJoystickAt(p);
 }
 
-function updateJoystick(touch) {
-  const p = getCanvasPoint(touch);
+function updateJoystickAt(p) {
   let dx = p.x - joystick.baseX;
   let dy = p.y - joystick.baseY;
   const dist = Math.hypot(dx, dy);
@@ -126,18 +138,37 @@ function updateJoystick(touch) {
   joystick.dy = dy / max;
 }
 
+function updateJoystick(touch) {
+  updateJoystickAt(getCanvasPoint(touch));
+}
+
 function endJoystick() {
   joystick.active = false;
   joystick.touchId = null;
+  joystick.stickX = joystick.baseX;
+  joystick.stickY = joystick.baseY;
   joystick.dx = 0; joystick.dy = 0;
 }
 
 canvas.addEventListener("touchstart", (e) => {
   touchSeen = true;
-  // Every touch-down fires one shot (tank only — handled in update()).
-  touchFire = true;
+
+  // If the round is over, any touch restarts.
+  if (game.state !== "playing") {
+    resetGame();
+    e.preventDefault();
+    return;
+  }
+
   for (const t of e.changedTouches) {
-    if (!joystick.active) startJoystick(t);
+    const p = getCanvasPoint(t);
+    if (!joystick.active && inJoystickArea(p.x, p.y)) {
+      // Touch in the joystick area → steer with it.
+      startJoystick(t);
+    } else {
+      // Any other touch counts as a fire tap (tank only — consumed in update()).
+      touchFire = true;
+    }
   }
   e.preventDefault();
 }, { passive: false });
@@ -864,10 +895,26 @@ function spinOut(v, dt) {
   v.spinning -= dt;
   if (v.spinning <= 0) {
     v.spinning = 0;
-    v.x = roadCenterAt(v.y); // reset to the middle of the road
+    v.x = findSafeResetX(v);
     v.angle = v.resetAngle;  // face original direction
     v.speed = 0;
   }
+}
+
+// Pick a spot that's on the ice AND not inside a snow island.
+function findSafeResetX(v) {
+  const y = v.y;
+  const l = roadLeftAt(y);
+  const r = roadRightAt(y);
+  const center = (l + r) / 2;
+  const onIce = (x) => x > l + v.w / 2 && x < r - v.w / 2 && !isOnIsland(x, y);
+  if (onIce(center)) return center;
+  // Walk outward from center looking for a safe x on either side.
+  for (let dx = 20; dx < (r - l); dx += 20) {
+    if (onIce(center - dx)) return center - dx;
+    if (onIce(center + dx)) return center + dx;
+  }
+  return center; // fallback — shouldn't hit
 }
 
 function isOnSnow(v) {
@@ -1162,39 +1209,23 @@ function drawHUD() {
 function drawTouchControls() {
   if (!isTouchish()) return;
 
-  // Joystick base + stick (only visible while touched).
-  if (joystick.active) {
-    ctx.beginPath();
-    ctx.arc(joystick.baseX, joystick.baseY, joystick.radius, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(0,0,0,0.3)";
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,0.7)";
-    ctx.lineWidth = 3;
-    ctx.stroke();
+  // Joystick base — always visible in the bottom-left corner.
+  ctx.beginPath();
+  ctx.arc(joystick.baseX, joystick.baseY, joystick.radius, 0, Math.PI * 2);
+  ctx.fillStyle = joystick.active ? "rgba(0,0,0,0.45)" : "rgba(0,0,0,0.3)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.7)";
+  ctx.lineWidth = 3;
+  ctx.stroke();
 
-    ctx.beginPath();
-    ctx.arc(joystick.stickX, joystick.stickY, joystick.radius * 0.5, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(255,255,255,0.85)";
-    ctx.fill();
-    ctx.stroke();
-  } else {
-    // Hint pill in the bottom-left so first-time users know where to touch.
-    const hintX = 90, hintY = canvas.height - 100;
-    ctx.beginPath();
-    ctx.arc(hintX, hintY, 48, 0, Math.PI * 2);
-    ctx.fillStyle = "rgba(0,0,0,0.35)";
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,0.6)";
-    ctx.lineWidth = 2;
-    ctx.setLineDash([6, 6]);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.font = "bold 14px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = "#eaf4ff";
-    ctx.fillText("MOVE", hintX, hintY);
-  }
+  // Stick — brighter when active.
+  ctx.beginPath();
+  ctx.arc(joystick.stickX, joystick.stickY, joystick.radius * 0.5, 0, Math.PI * 2);
+  ctx.fillStyle = joystick.active ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.55)";
+  ctx.fill();
+  ctx.strokeStyle = "rgba(255,255,255,0.9)";
+  ctx.lineWidth = 2;
+  ctx.stroke();
 }
 
 function drawResumeCountdown() {
