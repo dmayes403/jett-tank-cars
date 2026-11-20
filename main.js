@@ -7,6 +7,10 @@ function startGame() {
   homeEl.style.display = "none";
   // Prime the audio context inside the user gesture (some browsers require this).
   if (typeof getAudio === "function") getAudio();
+  // Restart the round fresh so the "YOU ARE THE ___" splash shows for its
+  // full duration — otherwise it counts down while the user is still on
+  // the home page and often gets skipped.
+  if (typeof resetGame === "function") resetGame();
   if (typeof startMusic === "function") startMusic();
 }
 

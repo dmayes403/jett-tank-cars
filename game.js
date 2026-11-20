@@ -96,9 +96,13 @@ const joystick = {
 };
 
 function layoutJoystick() {
-  // Bottom-left corner, with some margin for comfort.
-  joystick.baseX = 110;
-  joystick.baseY = canvas.height - 130;
+  // Shrink the joystick on short viewports (landscape phones) so it doesn't eat the game.
+  const compact = canvas.height < 520;
+  joystick.radius       = compact ? 48 : 70;
+  joystick.touchRadius  = compact ? 80 : 110;
+  const margin = compact ? joystick.radius + 15 : 110;
+  joystick.baseX = margin;
+  joystick.baseY = canvas.height - margin;
   joystick.stickX = joystick.baseX;
   joystick.stickY = joystick.baseY;
 }
@@ -1209,21 +1213,21 @@ function drawHUD() {
 function drawTouchControls() {
   if (!isTouchish()) return;
 
-  // Joystick base — always visible in the bottom-left corner.
+  // Joystick base — opaque so the game doesn't peek through.
   ctx.beginPath();
   ctx.arc(joystick.baseX, joystick.baseY, joystick.radius, 0, Math.PI * 2);
-  ctx.fillStyle = joystick.active ? "rgba(0,0,0,0.45)" : "rgba(0,0,0,0.3)";
+  ctx.fillStyle = joystick.active ? "rgba(20, 30, 45, 0.9)" : "rgba(20, 30, 45, 0.75)";
   ctx.fill();
-  ctx.strokeStyle = "rgba(255,255,255,0.7)";
+  ctx.strokeStyle = "rgba(255,255,255,0.8)";
   ctx.lineWidth = 3;
   ctx.stroke();
 
   // Stick — brighter when active.
   ctx.beginPath();
   ctx.arc(joystick.stickX, joystick.stickY, joystick.radius * 0.5, 0, Math.PI * 2);
-  ctx.fillStyle = joystick.active ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.55)";
+  ctx.fillStyle = joystick.active ? "rgba(255,255,255,0.95)" : "rgba(255,255,255,0.7)";
   ctx.fill();
-  ctx.strokeStyle = "rgba(255,255,255,0.9)";
+  ctx.strokeStyle = "rgba(255,255,255,0.95)";
   ctx.lineWidth = 2;
   ctx.stroke();
 }
@@ -1256,27 +1260,31 @@ function drawRoleSplash() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
   const title = game.playerIsTank ? "YOU ARE THE TANK" : "YOU ARE THE CAR";
+  const fireVerb = isTouchish() ? "tap" : "Space";
   const sub   = game.playerIsTank
-    ? "Hunt down the car with Space"
+    ? `Hunt down the car — ${fireVerb} to fire`
     : "Dodge the tank until the timer runs out";
   const color = game.playerIsTank ? "#6cdc6c" : "#ff7a5c";
 
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
-  ctx.font = "bold 72px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  // Scale title to fit the viewport width (with margin).
+  const titleSize = Math.min(72, canvas.width / (title.length * 0.6));
+  ctx.font = `bold ${titleSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
   ctx.lineJoin = "round";
-  ctx.lineWidth = 10;
+  ctx.lineWidth = Math.max(4, titleSize * 0.12);
   ctx.strokeStyle = "rgba(0,0,0,0.8)";
   ctx.strokeText(title, canvas.width / 2, canvas.height / 2 - 20);
   ctx.fillStyle = color;
   ctx.fillText(title, canvas.width / 2, canvas.height / 2 - 20);
 
-  ctx.font = "24px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+  const subSize = Math.min(24, canvas.width / 24);
+  ctx.font = `${subSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
   ctx.lineWidth = 5;
-  ctx.strokeText(sub, canvas.width / 2, canvas.height / 2 + 40);
+  ctx.strokeText(sub, canvas.width / 2, canvas.height / 2 + titleSize * 0.7);
   ctx.fillStyle = "#eaf4ff";
-  ctx.fillText(sub, canvas.width / 2, canvas.height / 2 + 40);
+  ctx.fillText(sub, canvas.width / 2, canvas.height / 2 + titleSize * 0.7);
 }
 
 function drawGameOver() {
